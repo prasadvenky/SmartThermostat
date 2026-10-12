@@ -30,7 +30,8 @@ OLED display(4,5);
 /************************ Example Starts Here *******************************/
 
 
-#define RELAY_PIN 16 //Relay Pin for 
+#define RELAY_PIN 16 //Relay Pin for Heater
+#define HYSTERESIS 1 // Deadband (degF) around Set_Temp to avoid relay chatter
 
 // set up the  feed
 AdafruitIO_Feed *heatswitch = io.feed("heatswitch"); 
@@ -42,8 +43,9 @@ Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
 
 int f = 0; // Stores your current Room Temperature in Faranheit 
 int lastf=-1;
-bool man_set = false; 
-int Set_Temp = 0;
+bool man_set = false; // true while the heatswitch feed is manually overriding the thermostat
+int Set_Temp = 0; // 0 until a value arrives on the settemp feed
+bool heater_on = false;
 
 void setup() {
 
@@ -105,9 +107,15 @@ void loop() {
   float c = tempsensor.readTempC();
   f = c * 9.0 / 5.0 + 32;// Convert degC to degF for us in the US :)
 
-  if()
-
-  
+  // Automatic control: heat below Set_Temp - HYSTERESIS, stop above Set_Temp + HYSTERESIS
+  if(!man_set && Set_Temp > 0) {
+    if(!heater_on && f <= Set_Temp - HYSTERESIS) {
+      setHeater(true);
+    }
+    else if(heater_on && f >= Set_Temp + HYSTERESIS) {
+      setHeater(false);
+    }
+  }
 
   // return if the value hasn't changed
   if(f == lastf)
@@ -123,6 +131,13 @@ void loop() {
 
 }
 
+void setHeater(bool on) {
+  heater_on = on;
+  digitalWrite(RELAY_PIN, on ? HIGH : LOW);
+  Serial.print("Heater ");
+  Serial.println(on ? "ON" : "OFF");
+}
+
 // this function is called whenever an 'digital' feed message
 // is received from Adafruit IO. it was attached to
 // the 'digital' feed in the setup() function above.
@@ -130,10 +145,11 @@ void handleMessage(AdafruitIO_Data *data) {
   //display.clear();
   Serial.print("received <- ");
   
-  // write the current state to the led
-  digitalWrite(RELAY_PIN, data->toPinLevel());
-  
-  if(data->toPinLevel() == HIGH){
+  // manual override until a new set temperature is received
+  man_set = true;
+  setHeater(data->toPinLevel() == HIGH);
+
+  if(heater_on){
     Serial.println("HIGH");
     display.on();
     display.print("Heater ON ",2);
@@ -157,6 +173,7 @@ void handleSetTemp(AdafruitIO_Data *data) {
   // convert the data to integer
   int reading = data->toInt();
   Set_Temp = reading;
+  man_set = false; // a new set temperature returns control to the thermostat
   String A=String(reading);
   char Value[5];
   A.toCharArray(Value,5);
